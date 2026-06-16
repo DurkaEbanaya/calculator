@@ -297,6 +297,9 @@ src/CalcViewModel/DataLoaders/DataLoaderConstants.h
 !src/x86
 !src/out
 
+# macOS
+.DS_Store
+
 # Rust port
 rust-port/target/
 rust-port/dist/
