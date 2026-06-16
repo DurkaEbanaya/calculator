@@ -37,7 +37,6 @@ struct App {
 impl App {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         install_system_font(&cc.egui_ctx);
-        setup_macos_acrylic(cc);
 
         let mut visuals = egui::Visuals::dark();
         visuals.window_fill = Color32::TRANSPARENT;
@@ -249,50 +248,6 @@ fn install_system_font(ctx: &egui::Context) {
 fn acrylic_bg() -> Color32 {
     Color32::from_rgba_unmultiplied(34, 60, 76, 218)
 }
-
-#[cfg(target_os = "macos")]
-fn setup_macos_acrylic(window: &impl raw_window_handle::HasWindowHandle) {
-    use objc2::runtime::AnyObject;
-    use objc2::{class, msg_send};
-    use objc2_foundation::CGRect;
-    use raw_window_handle::RawWindowHandle;
-
-    let Ok(handle) = window.window_handle() else {
-        return;
-    };
-
-    let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
-        return;
-    };
-
-    unsafe {
-        let ns_view = handle.ns_view.as_ptr() as *mut AnyObject;
-        let ns_window: *mut AnyObject = msg_send![ns_view, window];
-        if ns_window.is_null() {
-            return;
-        }
-        let content_view: *mut AnyObject = msg_send![ns_window, contentView];
-        if content_view.is_null() {
-            return;
-        }
-
-        let bounds: CGRect = msg_send![content_view, bounds];
-        let effect_view: *mut AnyObject = msg_send![class!(NSVisualEffectView), alloc];
-        let effect_view: *mut AnyObject = msg_send![effect_view, initWithFrame: bounds];
-        if effect_view.is_null() {
-            return;
-        }
-
-        let _: () = msg_send![effect_view, setMaterial: 17isize]; // NSVisualEffectMaterialUnderWindowBackground
-        let _: () = msg_send![effect_view, setBlendingMode: 0isize]; // NSVisualEffectBlendingModeBehindWindow
-        let _: () = msg_send![effect_view, setState: 1isize]; // NSVisualEffectStateActive
-        let _: () = msg_send![effect_view, setAutoresizingMask: 18usize]; // width + height sizable
-        let _: () = msg_send![content_view, addSubview: effect_view positioned: -1isize relativeTo: std::ptr::null_mut::<AnyObject>()];
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn setup_macos_acrylic(_window: &impl raw_window_handle::HasWindowHandle) {}
 
 fn top_bar_button(ui: &mut egui::Ui, label: &str, height: f32) -> egui::Response {
     ui.add_sized(
