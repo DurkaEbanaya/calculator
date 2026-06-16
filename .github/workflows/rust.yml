@@ -1,0 +1,63 @@
+name: Rust
+
+on:
+  push:
+    branches: [main, rust-port]
+    paths:
+      - 'rust-port/**'
+      - '.github/workflows/rust.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'rust-port/**'
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: rust-port
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+      - name: Build x86_64
+        run: cargo build --release --target x86_64-apple-darwin
+      - name: Build aarch64
+        run: cargo build --release --target aarch64-apple-darwin
+      - name: Create universal binary
+        run: |
+          mkdir -p dist
+          lipo -create -output dist/mscalculator-rust-universal \
+            target/x86_64-apple-darwin/release/mscalculator-rust \
+            target/aarch64-apple-darwin/release/mscalculator-rust
+      - name: Upload macOS universal binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: mscalculator-rust-macos-universal
+          path: rust-port/dist/mscalculator-rust-universal
+
+  linux:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust-port
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libwayland-dev
+      - name: Build Linux x86_64
+        run: cargo build --release --target x86_64-unknown-linux-gnu
+      - name: Upload Linux binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: mscalculator-rust-linux-x86_64
+          path: rust-port/target/x86_64-unknown-linux-gnu/release/mscalculator-rust

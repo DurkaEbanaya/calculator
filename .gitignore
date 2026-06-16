@@ -296,3 +296,8 @@ src/CalcViewModel/DataLoaders/DataLoaderConstants.h
 !src/x64
 !src/x86
 !src/out
+
+# Rust port
+rust-port/target/
+rust-port/dist/
+rust-port/.DS_Store
