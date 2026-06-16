@@ -25,15 +25,23 @@ struct ButtonStyle {
     text: Color32,
 }
 
+struct AcrylicSettings {
+    transparency: f32,
+    intensity: f32,
+    brightness: f32,
+    blur: f32,
+}
+
 struct App {
     calc: calculator::Calculator,
-    acrylic_ready: bool,
+    acrylic_view: usize,
+    settings_open: bool,
+    acrylic: AcrylicSettings,
 }
 
 impl App {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         install_system_font(&cc.egui_ctx);
-        setup_macos_acrylic(cc);
 
         let mut visuals = egui::Visuals::dark();
         visuals.window_fill = Color32::TRANSPARENT;
@@ -45,16 +53,21 @@ impl App {
         cc.egui_ctx.set_visuals(visuals);
         Self {
             calc: calculator::Calculator::new(),
-            acrylic_ready: setup_macos_acrylic(cc),
+            acrylic_view: 0,
+            settings_open: false,
+            acrylic: AcrylicSettings {
+                transparency: 0.45,
+                intensity: 0.70,
+                brightness: 0.75,
+                blur: 0.45,
+            },
         }
     }
 }
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        if !self.acrylic_ready {
-            self.acrylic_ready = setup_macos_acrylic(frame);
-        }
+        self.acrylic_view = setup_acrylic(frame, &self.acrylic, self.acrylic_view);
 
         let full_size = ctx.screen_rect().size();
 
@@ -62,6 +75,9 @@ impl eframe::App for App {
             .frame(egui::Frame::none().fill(Color32::TRANSPARENT))
             .show(ctx, |ui| {
                 ui.spacing_mut().item_spacing = Vec2::new(0.0, 0.0);
+                let acrylic_rect = ui.max_rect();
+                ui.painter()
+                    .rect_filled(acrylic_rect, 0.0, acrylic_tint(&self.acrylic));
 
                 // Top bar: hamburger, Standard, history icon
                 ui.allocate_ui_with_layout(
@@ -79,6 +95,9 @@ impl eframe::App for App {
                         );
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             ui.spacing_mut().item_spacing = Vec2::ZERO;
+                            if top_bar_button(ui, "⚙", TOP_BAR_HEIGHT).clicked() {
+                                self.settings_open = !self.settings_open;
+                            }
                             top_bar_button(ui, "↺", TOP_BAR_HEIGHT);
                         });
                     },
@@ -116,19 +135,18 @@ impl eframe::App for App {
                     ("M-", true),
                     ("MS", self.calc.memory != 0.0),
                 ];
-                let mem_width = (full_size.x - (mem_labels.len() as f32 - 1.0) * KEYPAD_GAP)
-                    / mem_labels.len() as f32;
+                let mem_width = full_size.x / mem_labels.len() as f32;
                 ui.allocate_ui_with_layout(
                     Vec2::new(full_size.x, MEMORY_HEIGHT),
                     Layout::left_to_right(Align::Center),
                     |ui| {
-                        ui.spacing_mut().item_spacing = Vec2::new(KEYPAD_GAP, 0.0);
+                        ui.spacing_mut().item_spacing = Vec2::ZERO;
                         for (label, enabled) in mem_labels {
                             let text_color = if enabled { TEXT_WHITE } else { TEXT_DIM };
                             let style = ButtonStyle {
-                                fill: chrome_bg(),
-                                hover: chrome_hover_bg(),
-                                active: chrome_active_bg(),
+                                fill: chrome_bg(&self.acrylic),
+                                hover: chrome_hover_bg(&self.acrylic),
+                                active: chrome_active_bg(&self.acrylic),
                                 text: text_color,
                             };
                             let font_size = MEMORY_HEIGHT * 0.45;
@@ -194,7 +212,7 @@ impl eframe::App for App {
                                     label
                                 };
 
-                                let style = button_style(label, &self.calc);
+                                let style = button_style(label, &self.calc, &self.acrylic);
                                 let font_size = font_size_for(label, btn_width, row_height);
 
                                 let resp = calc_button(
@@ -213,6 +231,10 @@ impl eframe::App for App {
                     );
                 }
             });
+
+        if self.settings_open {
+            show_acrylic_settings(ctx, &mut self.settings_open, &mut self.acrylic);
+        }
     }
 }
 
@@ -247,78 +269,182 @@ fn install_system_font(ctx: &egui::Context) {
     }
 }
 
-fn chrome_bg() -> Color32 {
-    Color32::from_rgba_unmultiplied(14, 24, 28, 140)
+fn acrylic_tint(settings: &AcrylicSettings) -> Color32 {
+    let opacity = 1.0 - settings.transparency;
+    let value =
+        (24.0 * settings.brightness * (0.75 + settings.intensity * 0.10)).clamp(0.0, 100.0) as u8;
+    let alpha = (10.0 + 145.0 * opacity + 28.0 * settings.intensity).clamp(0.0, 215.0) as u8;
+    Color32::from_rgba_unmultiplied(
+        value,
+        value.saturating_add(5),
+        value.saturating_add(8),
+        alpha,
+    )
 }
 
-fn chrome_hover_bg() -> Color32 {
-    Color32::from_rgba_unmultiplied(52, 58, 60, 175)
+fn chrome_alpha(settings: &AcrylicSettings, base: f32) -> u8 {
+    let opacity = 1.0 - settings.transparency;
+    (base * (0.18 + opacity * 0.46 + settings.intensity * 0.16)).clamp(0.0, 255.0) as u8
 }
 
-fn chrome_active_bg() -> Color32 {
-    Color32::from_rgba_unmultiplied(78, 84, 86, 200)
+fn chrome_bg(settings: &AcrylicSettings) -> Color32 {
+    let b =
+        (30.0 * settings.brightness * (0.80 + settings.intensity * 0.10)).clamp(3.0, 120.0) as u8;
+    Color32::from_rgba_unmultiplied(b / 2, b, b + 4, chrome_alpha(settings, 150.0))
+}
+
+fn chrome_hover_bg(settings: &AcrylicSettings) -> Color32 {
+    let b =
+        (70.0 * settings.brightness * (0.85 + settings.intensity * 0.10)).clamp(16.0, 190.0) as u8;
+    Color32::from_rgba_unmultiplied(b - 8, b, b + 2, chrome_alpha(settings, 190.0))
+}
+
+fn chrome_active_bg(settings: &AcrylicSettings) -> Color32 {
+    let b =
+        (96.0 * settings.brightness * (0.85 + settings.intensity * 0.10)).clamp(26.0, 220.0) as u8;
+    Color32::from_rgba_unmultiplied(b - 10, b, b + 2, chrome_alpha(settings, 220.0))
+}
+
+fn show_acrylic_settings(
+    ctx: &egui::Context,
+    settings_open: &mut bool,
+    settings: &mut AcrylicSettings,
+) {
+    egui::Window::new("Acrylic")
+        .open(settings_open)
+        .title_bar(false)
+        .resizable(false)
+        .collapsible(false)
+        .default_pos(egui::pos2(170.0, 42.0))
+        .frame(
+            egui::Frame::none()
+                .fill(Color32::from_rgba_unmultiplied(20, 26, 28, 235))
+                .stroke(Stroke::new(
+                    1.0,
+                    Color32::from_rgba_unmultiplied(255, 255, 255, 40),
+                ))
+                .inner_margin(egui::Margin::same(12.0))
+                .rounding(0.0),
+        )
+        .show(ctx, |ui| {
+            ui.set_width(250.0);
+            ui.label(RichText::new("Acrylic settings").strong().color(TEXT_WHITE));
+            ui.add_space(6.0);
+            ui.label(RichText::new("Transparency").color(TEXT_DIM));
+            ui.add(egui::Slider::new(&mut settings.transparency, 0.0..=1.0).show_value(true));
+            ui.label(RichText::new("Intensity").color(TEXT_DIM));
+            ui.add(egui::Slider::new(&mut settings.intensity, 0.0..=3.0).show_value(true));
+            ui.label(RichText::new("Brightness").color(TEXT_DIM));
+            ui.add(egui::Slider::new(&mut settings.brightness, 0.20..=2.40).show_value(true));
+            ui.label(RichText::new("Blur").color(TEXT_DIM));
+            ui.add(egui::Slider::new(&mut settings.blur, 0.0..=1.0).show_value(true));
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                if ui.button("Subtle").clicked() {
+                    *settings = AcrylicSettings {
+                        transparency: 0.70,
+                        intensity: 0.30,
+                        brightness: 0.70,
+                        blur: 0.25,
+                    };
+                }
+                if ui.button("Glass").clicked() {
+                    *settings = AcrylicSettings {
+                        transparency: 0.74,
+                        intensity: 3.0,
+                        brightness: 1.10,
+                        blur: 1.0,
+                    };
+                }
+            });
+        });
 }
 
 #[cfg(target_os = "macos")]
-fn setup_macos_acrylic(window: &impl raw_window_handle::HasWindowHandle) -> bool {
+fn setup_acrylic(frame: &eframe::Frame, settings: &AcrylicSettings, acrylic_view: usize) -> usize {
     use objc2::runtime::AnyObject;
     use objc2::{class, msg_send};
     use objc2_foundation::CGRect;
-    use raw_window_handle::RawWindowHandle;
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
-    let Ok(handle) = window.window_handle() else {
-        return false;
+    const NS_VIEW_WIDTH_SIZABLE: usize = 2;
+    const NS_VIEW_HEIGHT_SIZABLE: usize = 16;
+    const NS_WINDOW_BELOW: isize = -1;
+    const NS_VISUAL_EFFECT_BLENDING_MODE_BEHIND_WINDOW: isize = 0;
+    const NS_VISUAL_EFFECT_STATE_ACTIVE: isize = 1;
+
+    let material = macos_material_for_blur(settings.blur);
+
+    if acrylic_view != 0 {
+        unsafe {
+            let effect_view = acrylic_view as *mut AnyObject;
+            let _: () = msg_send![effect_view, setMaterial: material];
+            let _: () = msg_send![effect_view, setState: NS_VISUAL_EFFECT_STATE_ACTIVE];
+        }
+        return acrylic_view;
+    }
+
+    let Ok(handle) = frame.window_handle() else {
+        return 0;
     };
 
     let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
-        return false;
+        return 0;
     };
 
     unsafe {
         let egui_view = handle.ns_view.as_ptr() as *mut AnyObject;
         if egui_view.is_null() {
-            return false;
+            return 0;
         }
 
+        let superview: *mut AnyObject = msg_send![egui_view, superview];
         let ns_window: *mut AnyObject = msg_send![egui_view, window];
-        if ns_window.is_null() {
-            return false;
+        if superview.is_null() || ns_window.is_null() {
+            return 0;
         }
 
-        let bounds: CGRect = msg_send![egui_view, bounds];
-        let container: *mut AnyObject = msg_send![class!(NSView), alloc];
-        let container: *mut AnyObject = msg_send![container, initWithFrame: bounds];
+        let frame_rect: CGRect = msg_send![egui_view, frame];
         let effect_view: *mut AnyObject = msg_send![class!(NSVisualEffectView), alloc];
-        let effect_view: *mut AnyObject = msg_send![effect_view, initWithFrame: bounds];
-        if container.is_null() || effect_view.is_null() {
-            return false;
+        let effect_view: *mut AnyObject = msg_send![effect_view, initWithFrame: frame_rect];
+        if effect_view.is_null() {
+            return 0;
         }
 
         let clear_color: *mut AnyObject = msg_send![class!(NSColor), clearColor];
         let _: () = msg_send![ns_window, setOpaque: false];
         let _: () = msg_send![ns_window, setBackgroundColor: clear_color];
-        let _: () = msg_send![container, setAutoresizingMask: 18usize];
-        let _: () = msg_send![effect_view, setAutoresizingMask: 18usize];
-        let _: () = msg_send![egui_view, setAutoresizingMask: 18usize];
-        let _: () = msg_send![egui_view, setFrame: bounds];
-
-        let _: () = msg_send![effect_view, setMaterial: 17isize]; // NSVisualEffectMaterialUnderWindowBackground
-        let _: () = msg_send![effect_view, setBlendingMode: 0isize]; // NSVisualEffectBlendingModeBehindWindow
-        let _: () = msg_send![effect_view, setState: 1isize]; // NSVisualEffectStateActive
-
-        let _: *mut AnyObject = msg_send![egui_view, retain];
-        let _: () = msg_send![ns_window, setContentView: container];
-        let _: () = msg_send![container, addSubview: effect_view];
+        let _: () = msg_send![effect_view, setAutoresizingMask: NS_VIEW_WIDTH_SIZABLE | NS_VIEW_HEIGHT_SIZABLE];
+        let _: () = msg_send![effect_view, setMaterial: material];
         let _: () =
-            msg_send![container, addSubview: egui_view positioned: 1isize relativeTo: effect_view];
-        let _: () = msg_send![egui_view, release];
-        true
+            msg_send![effect_view, setBlendingMode: NS_VISUAL_EFFECT_BLENDING_MODE_BEHIND_WINDOW];
+        let _: () = msg_send![effect_view, setState: NS_VISUAL_EFFECT_STATE_ACTIVE];
+
+        let _: () = msg_send![superview, addSubview: effect_view positioned: NS_WINDOW_BELOW relativeTo: egui_view];
+        let _: () = msg_send![effect_view, release];
+
+        effect_view as usize
     }
 }
 
 #[cfg(not(target_os = "macos"))]
-fn setup_macos_acrylic(_window: &impl raw_window_handle::HasWindowHandle) -> bool {
-    true
+fn setup_acrylic(
+    _frame: &eframe::Frame,
+    _settings: &AcrylicSettings,
+    acrylic_view: usize,
+) -> usize {
+    acrylic_view
+}
+
+#[cfg(target_os = "macos")]
+fn macos_material_for_blur(blur: f32) -> isize {
+    match blur {
+        b if b < 0.20 => 12, // NSVisualEffectMaterialWindowBackground
+        b if b < 0.45 => 21, // NSVisualEffectMaterialUnderWindowBackground
+        b if b < 0.70 => 18, // NSVisualEffectMaterialContentBackground
+        b if b < 0.90 => 7,  // NSVisualEffectMaterialSidebar
+        _ => 13,             // NSVisualEffectMaterialHudWindow
+    }
 }
 
 fn top_bar_button(ui: &mut egui::Ui, label: &str, height: f32) -> egui::Response {
@@ -366,12 +492,16 @@ fn clear_label(calc: &calculator::Calculator) -> &'static str {
     }
 }
 
-fn button_style<'a>(label: &'a str, _calc: &calculator::Calculator) -> ButtonStyle {
+fn button_style<'a>(
+    label: &'a str,
+    _calc: &calculator::Calculator,
+    acrylic: &AcrylicSettings,
+) -> ButtonStyle {
     if label == "=" {
         ButtonStyle {
-            fill: chrome_bg(),
-            hover: chrome_hover_bg(),
-            active: chrome_active_bg(),
+            fill: chrome_bg(acrylic),
+            hover: chrome_hover_bg(acrylic),
+            active: chrome_active_bg(acrylic),
             text: TEXT_WHITE,
         }
     } else if is_number_button(label) {
@@ -383,9 +513,9 @@ fn button_style<'a>(label: &'a str, _calc: &calculator::Calculator) -> ButtonSty
         }
     } else {
         ButtonStyle {
-            fill: chrome_bg(),
-            hover: chrome_hover_bg(),
-            active: chrome_active_bg(),
+            fill: chrome_bg(acrylic),
+            hover: chrome_hover_bg(acrylic),
+            active: chrome_active_bg(acrylic),
             text: TEXT_WHITE,
         }
     }
