@@ -10,16 +10,11 @@ const TOP_BAR_HEIGHT: f32 = 40.0;
 const MEMORY_HEIGHT: f32 = 32.0;
 const KEYPAD_GAP: f32 = 1.0;
 
-// Windows Calculator 2020 dark palette, sampled from the reference screenshots
-const BTN_NUMBER: Color32 = Color32::from_rgb(7, 13, 15); // #070d0f
-const BTN_FUNC: Color32 = Color32::from_rgb(20, 37, 46); // #14252e
-const BTN_ACCENT: Color32 = Color32::from_rgb(20, 84, 131); // #145483
-const BTN_NUMBER_HOVER: Color32 = Color32::from_rgb(25, 41, 50);
-const BTN_FUNC_HOVER: Color32 = Color32::from_rgb(40, 60, 72);
-const BTN_ACCENT_HOVER: Color32 = Color32::from_rgb(28, 100, 150);
-const BTN_NUMBER_ACTIVE: Color32 = Color32::from_rgb(40, 60, 72);
-const BTN_FUNC_ACTIVE: Color32 = Color32::from_rgb(55, 75, 90);
-const BTN_ACCENT_ACTIVE: Color32 = Color32::from_rgb(35, 110, 160);
+// Windows Calculator 2020 dark Acrylic palette: number buttons are dense,
+// surrounding chrome lets the system blur/material show through.
+const BTN_NUMBER: Color32 = Color32::from_rgb(5, 9, 10);
+const BTN_NUMBER_HOVER: Color32 = Color32::from_rgb(24, 28, 30);
+const BTN_NUMBER_ACTIVE: Color32 = Color32::from_rgb(44, 48, 50);
 const TEXT_WHITE: Color32 = Color32::WHITE;
 const TEXT_DIM: Color32 = Color32::from_rgb(128, 144, 144); // disabled memory
 
@@ -32,11 +27,13 @@ struct ButtonStyle {
 
 struct App {
     calc: calculator::Calculator,
+    acrylic_ready: bool,
 }
 
 impl App {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         install_system_font(&cc.egui_ctx);
+        setup_macos_acrylic(cc);
 
         let mut visuals = egui::Visuals::dark();
         visuals.window_fill = Color32::TRANSPARENT;
@@ -48,16 +45,21 @@ impl App {
         cc.egui_ctx.set_visuals(visuals);
         Self {
             calc: calculator::Calculator::new(),
+            acrylic_ready: setup_macos_acrylic(cc),
         }
     }
 }
 
 impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        if !self.acrylic_ready {
+            self.acrylic_ready = setup_macos_acrylic(frame);
+        }
+
         let full_size = ctx.screen_rect().size();
 
         egui::CentralPanel::default()
-            .frame(egui::Frame::none().fill(acrylic_bg()))
+            .frame(egui::Frame::none().fill(Color32::TRANSPARENT))
             .show(ctx, |ui| {
                 ui.spacing_mut().item_spacing = Vec2::new(0.0, 0.0);
 
@@ -124,9 +126,9 @@ impl eframe::App for App {
                         for (label, enabled) in mem_labels {
                             let text_color = if enabled { TEXT_WHITE } else { TEXT_DIM };
                             let style = ButtonStyle {
-                                fill: acrylic_bg(),
-                                hover: Color32::from_rgb(45, 70, 85),
-                                active: Color32::from_rgb(60, 90, 110),
+                                fill: chrome_bg(),
+                                hover: chrome_hover_bg(),
+                                active: chrome_active_bg(),
                                 text: text_color,
                             };
                             let font_size = MEMORY_HEIGHT * 0.45;
@@ -245,15 +247,85 @@ fn install_system_font(ctx: &egui::Context) {
     }
 }
 
-fn acrylic_bg() -> Color32 {
-    Color32::from_rgba_unmultiplied(34, 60, 76, 218)
+fn chrome_bg() -> Color32 {
+    Color32::from_rgba_unmultiplied(14, 24, 28, 140)
+}
+
+fn chrome_hover_bg() -> Color32 {
+    Color32::from_rgba_unmultiplied(52, 58, 60, 175)
+}
+
+fn chrome_active_bg() -> Color32 {
+    Color32::from_rgba_unmultiplied(78, 84, 86, 200)
+}
+
+#[cfg(target_os = "macos")]
+fn setup_macos_acrylic(window: &impl raw_window_handle::HasWindowHandle) -> bool {
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+    use objc2_foundation::CGRect;
+    use raw_window_handle::RawWindowHandle;
+
+    let Ok(handle) = window.window_handle() else {
+        return false;
+    };
+
+    let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+        return false;
+    };
+
+    unsafe {
+        let egui_view = handle.ns_view.as_ptr() as *mut AnyObject;
+        if egui_view.is_null() {
+            return false;
+        }
+
+        let ns_window: *mut AnyObject = msg_send![egui_view, window];
+        if ns_window.is_null() {
+            return false;
+        }
+
+        let bounds: CGRect = msg_send![egui_view, bounds];
+        let container: *mut AnyObject = msg_send![class!(NSView), alloc];
+        let container: *mut AnyObject = msg_send![container, initWithFrame: bounds];
+        let effect_view: *mut AnyObject = msg_send![class!(NSVisualEffectView), alloc];
+        let effect_view: *mut AnyObject = msg_send![effect_view, initWithFrame: bounds];
+        if container.is_null() || effect_view.is_null() {
+            return false;
+        }
+
+        let clear_color: *mut AnyObject = msg_send![class!(NSColor), clearColor];
+        let _: () = msg_send![ns_window, setOpaque: false];
+        let _: () = msg_send![ns_window, setBackgroundColor: clear_color];
+        let _: () = msg_send![container, setAutoresizingMask: 18usize];
+        let _: () = msg_send![effect_view, setAutoresizingMask: 18usize];
+        let _: () = msg_send![egui_view, setAutoresizingMask: 18usize];
+        let _: () = msg_send![egui_view, setFrame: bounds];
+
+        let _: () = msg_send![effect_view, setMaterial: 17isize]; // NSVisualEffectMaterialUnderWindowBackground
+        let _: () = msg_send![effect_view, setBlendingMode: 0isize]; // NSVisualEffectBlendingModeBehindWindow
+        let _: () = msg_send![effect_view, setState: 1isize]; // NSVisualEffectStateActive
+
+        let _: *mut AnyObject = msg_send![egui_view, retain];
+        let _: () = msg_send![ns_window, setContentView: container];
+        let _: () = msg_send![container, addSubview: effect_view];
+        let _: () =
+            msg_send![container, addSubview: egui_view positioned: 1isize relativeTo: effect_view];
+        let _: () = msg_send![egui_view, release];
+        true
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn setup_macos_acrylic(_window: &impl raw_window_handle::HasWindowHandle) -> bool {
+    true
 }
 
 fn top_bar_button(ui: &mut egui::Ui, label: &str, height: f32) -> egui::Response {
     ui.add_sized(
         Vec2::new(height, height),
         egui::Button::new(RichText::new(label).size(20.0).color(TEXT_WHITE))
-            .fill(acrylic_bg())
+            .fill(Color32::TRANSPARENT)
             .frame(false),
     )
 }
@@ -297,9 +369,9 @@ fn clear_label(calc: &calculator::Calculator) -> &'static str {
 fn button_style<'a>(label: &'a str, _calc: &calculator::Calculator) -> ButtonStyle {
     if label == "=" {
         ButtonStyle {
-            fill: BTN_ACCENT,
-            hover: BTN_ACCENT_HOVER,
-            active: BTN_ACCENT_ACTIVE,
+            fill: chrome_bg(),
+            hover: chrome_hover_bg(),
+            active: chrome_active_bg(),
             text: TEXT_WHITE,
         }
     } else if is_number_button(label) {
@@ -311,9 +383,9 @@ fn button_style<'a>(label: &'a str, _calc: &calculator::Calculator) -> ButtonSty
         }
     } else {
         ButtonStyle {
-            fill: BTN_FUNC,
-            hover: BTN_FUNC_HOVER,
-            active: BTN_FUNC_ACTIVE,
+            fill: chrome_bg(),
+            hover: chrome_hover_bg(),
+            active: chrome_active_bg(),
             text: TEXT_WHITE,
         }
     }
